@@ -40,7 +40,6 @@
 #define ECRYPTFS_WAS_ENCRYPTED_OTHER_DEVICE 0x0100
 #endif
 
-
 /**
  * ecryptfs_read_update_atime
  *
@@ -231,6 +230,19 @@ out:
 	return rc;
 }
 
+static int ecryptfs_mmap(struct file *file, struct vm_area_struct *vma)
+{
+	struct file *lower_file = ecryptfs_file_to_lower(file);
+	/*
+	 * Don't allow mmap on top of file systems that don't support it
+	 * natively.  If FILESYSTEM_MAX_STACK_DEPTH > 2 or ecryptfs
+	 * allows recursive mounting, this will need to be extended.
+	 */
+	if (!lower_file->f_op->mmap)
+		return -ENODEV;
+	return generic_file_mmap(file, vma);
+}
+
 /**
  * ecryptfs_open
  * @inode: inode speciying file to open
@@ -295,8 +307,10 @@ static int ecryptfs_open(struct inode *inode, struct file *file)
 		goto out;
 	}
 	rc = read_or_initialize_metadata(ecryptfs_dentry);
-	if (rc)
+	if (rc) {
 		goto out_put;
+	}
+
 	ecryptfs_printk(KERN_DEBUG, "inode w/ addr = [0x%p], i_ino = "
 			"[0x%.16lx] size: [0x%.16llx]\n", inode, inode->i_ino,
 			(unsigned long long)i_size_read(inode));
@@ -324,6 +338,9 @@ static int ecryptfs_flush(struct file *file, fl_owner_t td)
 
 static int ecryptfs_release(struct inode *inode, struct file *file)
 {
+	struct ecryptfs_crypt_stat *crypt_stat;
+	crypt_stat = &ecryptfs_inode_to_private(inode)->crypt_stat;
+
 	ecryptfs_put_lower_file(inode);
 	kmem_cache_free(ecryptfs_file_info_cache,
 			ecryptfs_file_to_private(file));
@@ -417,44 +434,6 @@ ecryptfs_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct file *lower_file = NULL;
 	long rc = -ENOIOCTLCMD;
-#ifdef CONFIG_WTL_ENCRYPTION_FILTER
-	if (cmd == ECRYPTFS_IOCTL_GET_ATTRIBUTES) {
-		u32 __user *user_attr = (u32 __user *)arg;
-		u32 attr = 0;
-		char filename[NAME_MAX+1] = {0};
-		struct dentry *ecryptfs_dentry = file->f_path.dentry;
-		struct ecryptfs_mount_crypt_stat *mount_crypt_stat =
-			&ecryptfs_superblock_to_private(ecryptfs_dentry->d_sb)
-				->mount_crypt_stat;
-
-		struct inode *inode = ecryptfs_dentry->d_inode;
-		struct ecryptfs_crypt_stat *crypt_stat =
-			&ecryptfs_inode_to_private(inode)->crypt_stat;
-		struct dentry *fp_dentry =
-			ecryptfs_inode_to_private(inode)->lower_file->f_dentry;
-		if (fp_dentry->d_name.len <= NAME_MAX)
-			memcpy(filename, fp_dentry->d_name.name,
-					fp_dentry->d_name.len + 1);
-
-		mutex_lock(&crypt_stat->cs_mutex);
-		if ((crypt_stat->flags & ECRYPTFS_ENCRYPTED
-			|| crypt_stat->flags & ECRYPTFS_ENCRYPTED_OTHER_DEVICE)
-			|| ((mount_crypt_stat->flags
-					& ECRYPTFS_ENABLE_FILTERING)
-				&& (is_file_name_match
-					(mount_crypt_stat, fp_dentry)
-				|| is_file_ext_match
-					(mount_crypt_stat, filename)))) {
-			if (crypt_stat->flags & ECRYPTFS_KEY_VALID)
-				attr = ECRYPTFS_WAS_ENCRYPTED;
-			else
-				attr = ECRYPTFS_WAS_ENCRYPTED_OTHER_DEVICE;
-		}
-		mutex_unlock(&crypt_stat->cs_mutex);
-		put_user(attr, user_attr);
-		return 0;
-	}
-#endif
 
 	if (ecryptfs_file_to_private(file))
 		lower_file = ecryptfs_file_to_lower(file);
@@ -489,7 +468,7 @@ int is_file_name_match(struct ecryptfs_mount_crypt_stat *mcs,
 	str = kzalloc(mcs->max_name_filter_len + 1, GFP_KERNEL);
 	if (!str) {
 		printk(KERN_ERR "%s: Out of memory whilst attempting "
-			       "to kzalloc [%d] bytes\n", __func__,
+			       "to kzalloc [%zd] bytes\n", __func__,
 			       (mcs->max_name_filter_len + 1));
 		return 0;
 	}
@@ -585,7 +564,7 @@ const struct file_operations ecryptfs_main_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = ecryptfs_compat_ioctl,
 #endif
-	.mmap = generic_file_mmap,
+	.mmap = ecryptfs_mmap,
 	.open = ecryptfs_open,
 	.flush = ecryptfs_flush,
 	.release = ecryptfs_release,
