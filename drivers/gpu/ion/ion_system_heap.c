@@ -292,6 +292,13 @@ struct ion_heap *ion_system_heap_create(struct ion_platform_heap *unused)
 {
 	struct ion_system_heap *heap;
 	int i;
+	for (i = 0; i < num_orders; i++)
+		if (pools[i]) {
+			ion_page_pool_destroy(pools[i]);
+			pools[i] = NULL;
+		}
+}
+
 
 	heap = kzalloc(sizeof(struct ion_system_heap), GFP_KERNEL);
 	if (!heap)
