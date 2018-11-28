@@ -23,11 +23,8 @@
 #include <linux/init.h>
 #include <linux/nmi.h>
 #include <linux/dmi.h>
-#include "sched/sched.h"
-
-#ifdef CONFIG_EXYNOS_CORESIGHT_DEBUG
-#include <mach/coresight-debug.h>
-#endif
+#include <linux/coresight.h>
+#include <mach/sec_debug.h>
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
